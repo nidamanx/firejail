@@ -1,3 +1,12 @@
+firejail (0.9.65) baseline; urgency=low
+  * filtering environment variables
+  * new profiles: vmware-view, display-im6.q16
+ -- netblue30 <netblue30@yahoo.com>  Tue, 9 Feb 2021 09:00:00 -0500
+
+firejail (0.9.64.4) baseline; urgency=low
+  * disabled overlayfs, pending multiple fixes (CVE-2021-26910)
+ -- netblue30 <netblue30@yahoo.com>  Sun, 7 Feb 2021 09:00:00 -0500
+
 firejail (0.9.64.2) baseline; urgency=low
   * allow --tmpfs inside $HOME for unprivileged users
   * --disable-usertmpfs  compile time option

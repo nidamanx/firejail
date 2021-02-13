@@ -1,11 +1,10 @@
-# Firejail profile for zstd
-# Description: Zstandard - Fast real-time compression algorithm
+# Firejail profile for display-im6.q16
 # This file is overwritten after every install/update
-quiet
 # Persistent local customizations
-include zstd.local
+include display-im6.q16.local
 # Persistent global definitions
 include globals.local
 
+
 # Redirect
-include archiver-common.inc
+include display.profile
