@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2020 Firejail Authors
+ * Copyright (C) 2014-2021 Firejail Authors
  *
  * This file is part of firejail project
  *
@@ -462,10 +462,10 @@ static int ok_to_run(const char *program) {
 
 void start_application(int no_sandbox, int fd, char *set_sandbox_status) {
 	// set environment
-	if (no_sandbox == 0) {
+	if (no_sandbox == 0)
 		env_defaults();
-		env_apply_all();
-	}
+	env_apply_all();
+
 	// restore original umask
 	umask(orig_umask);
 
