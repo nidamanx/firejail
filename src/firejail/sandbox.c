@@ -475,23 +475,9 @@ void start_application(int no_sandbox, int fd, char *set_sandbox_status) {
 	}
 
 	//****************************************
-	// audit
-	//****************************************
-	if (arg_audit) {
-		assert(arg_audit_prog);
-
-#ifdef HAVE_GCOV
-		__gcov_dump();
-#endif
-		seccomp_install_filters();
-		if (set_sandbox_status)
-			*set_sandbox_status = SANDBOX_DONE;
-		execl(arg_audit_prog, arg_audit_prog, NULL);
-	}
-	//****************************************
 	// start the program without using a shell
 	//****************************************
-	else if (arg_shell_none) {
+	if (arg_shell_none) {
 		if (arg_debug) {
 			int i;
 			for (i = cfg.original_program_index; i < cfg.original_argc; i++) {
@@ -594,7 +580,7 @@ static void enforce_filters(void) {
 	force_nonewprivs = 1;
 
 	// disable all capabilities
-	fmessage("\n**     Warning: dropping all Linux capabilities     **\n\n");
+	fmessage("\n**     Warning: dropping all Linux capabilities and setting NO_NEW_PRIVS prctl     **\n\n");
 	arg_caps_drop_all = 1;
 
 	// drop all supplementary groups; /etc/group file inside chroot
@@ -795,11 +781,16 @@ int sandbox(void* sandbox_arg) {
 			exit(rv);
 	}
 
+#ifdef HAVE_FORCE_NONEWPRIVS
+	bool always_enforce_filters = true;
+#else
+	bool always_enforce_filters = false;
+#endif
 	// need ld.so.preload if tracing or seccomp with any non-default lists
 	bool need_preload = arg_trace || arg_tracelog || arg_seccomp_postexec;
 	// for --appimage, --chroot and --overlay* we force NO_NEW_PRIVS
 	// and drop all capabilities
-	if (getuid() != 0 && (arg_appimage || cfg.chrootdir || arg_overlay)) {
+	if (getuid() != 0 && (arg_appimage || cfg.chrootdir || arg_overlay || always_enforce_filters)) {
 		enforce_filters();
 		need_preload = arg_trace || arg_tracelog;
 	}
@@ -969,8 +960,29 @@ int sandbox(void* sandbox_arg) {
 		else if (arg_overlay)
 			fwarning("private-etc feature is disabled in overlay\n");
 		else {
-			fs_private_dir_list("/etc", RUN_ETC_DIR, cfg.etc_private_keep);
-			fs_private_dir_list("/usr/etc", RUN_USR_ETC_DIR, cfg.etc_private_keep); // openSUSE
+			/* Current /etc/passwd and /etc/group files are bind
+			 * mounted filtered versions of originals. Leaving
+			 * them underneath private-etc mount causes problems
+			 * in devices with older kernels, e.g. attempts to
+			 * update the real /etc/passwd file yield EBUSY.
+			 *
+			 * As we do want to retain filtered /etc content:
+			 * 1. duplicate /etc content to RUN_ETC_DIR
+			 * 2. unmount bind mounts from /etc
+			 * 3. mount RUN_ETC_DIR at /etc
+			 */
+			fs_private_dir_copy("/etc", RUN_ETC_DIR, cfg.etc_private_keep);
+			fs_private_dir_copy("/usr/etc", RUN_USR_ETC_DIR, cfg.etc_private_keep); // openSUSE
+
+			if (umount2("/etc/group", MNT_DETACH) == -1)
+				fprintf(stderr, "/etc/group: unmount: %m\n");
+
+			if (umount2("/etc/passwd", MNT_DETACH) == -1)
+				fprintf(stderr, "/etc/passwd: unmount: %m\n");
+
+			fs_private_dir_mount("/etc", RUN_ETC_DIR);
+			fs_private_dir_mount("/usr/etc", RUN_USR_ETC_DIR);
+
 			// create /etc/ld.so.preload file again
 			if (need_preload)
 				fs_trace_preload();

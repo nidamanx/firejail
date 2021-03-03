@@ -17,31 +17,31 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
-#include "faudit.h"
-#include <dirent.h>
+#include "jailtest.h"
+#define MAXBUF 4096
 
-void dev_test(void) {
-	DIR *dir;
-	if (!(dir = opendir("/dev"))) {
-		fprintf(stderr, "Error: cannot open /dev directory\n");
+void seccomp_test(pid_t pid) {
+	char *file;
+	if (asprintf(&file, "/proc/%d/status", pid) == -1)
+		errExit("asprintf");
+
+	FILE *fp = fopen(file, "r");
+	if (!fp) {
+		printf("  Error: cannot open %s\n", file);
+		free(file);
 		return;
 	}
 
-	struct dirent *entry;
-	printf("INFO: files visible in /dev directory: ");
-	int cnt = 0;
-	while ((entry = readdir(dir)) != NULL) {
-		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-			continue;
-
-		printf("%s, ", entry->d_name);
-		cnt++;
+	char buf[MAXBUF];
+	while (fgets(buf, MAXBUF, fp)) {
+		if (strncmp(buf, "Seccomp:", 8) == 0) {
+			int val = -1;
+			int rv = sscanf(buf + 8, "\t%d", &val);
+			if (rv != 1 || val == 0)
+				printf("   Warning: seccomp not enabled\n");
+			break;
+		}
 	}
-	printf("\n");
-
-	if (cnt > 20)
-		printf("MAYBE: /dev directory seems to be fully populated. Use --private-dev or --whitelist to restrict the access.\n");
-	else
-		printf("GOOD: Access to /dev directory is restricted.\n");
-	closedir(dir);
+	fclose(fp);
+	free(file);
 }
