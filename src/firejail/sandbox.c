@@ -575,12 +575,12 @@ void start_application(int no_sandbox, int fd, char *set_sandbox_status) {
 }
 
 static void enforce_filters(void) {
+	fmessage("\n** Warning: dropping all Linux capabilities and setting NO_NEW_PRIVS prctl **\n\n");
 	// enforce NO_NEW_PRIVS
 	arg_nonewprivs = 1;
 	force_nonewprivs = 1;
 
 	// disable all capabilities
-	fmessage("\n**     Warning: dropping all Linux capabilities and setting NO_NEW_PRIVS prctl     **\n\n");
 	arg_caps_drop_all = 1;
 
 	// drop all supplementary groups; /etc/group file inside chroot
@@ -786,14 +786,13 @@ int sandbox(void* sandbox_arg) {
 #else
 	bool always_enforce_filters = false;
 #endif
-	// need ld.so.preload if tracing or seccomp with any non-default lists
-	bool need_preload = arg_trace || arg_tracelog || arg_seccomp_postexec;
 	// for --appimage, --chroot and --overlay* we force NO_NEW_PRIVS
 	// and drop all capabilities
-	if (getuid() != 0 && (arg_appimage || cfg.chrootdir || arg_overlay || always_enforce_filters)) {
+	if (getuid() != 0 && (arg_appimage || cfg.chrootdir || arg_overlay || always_enforce_filters))
 		enforce_filters();
-		need_preload = arg_trace || arg_tracelog;
-	}
+
+	// need ld.so.preload if tracing or seccomp with any non-default lists
+	bool need_preload = arg_trace || arg_tracelog || arg_seccomp_postexec;
 
 	// trace pre-install
 	if (need_preload)
@@ -971,21 +970,24 @@ int sandbox(void* sandbox_arg) {
 			 * 2. unmount bind mounts from /etc
 			 * 3. mount RUN_ETC_DIR at /etc
 			 */
+			timetrace_start();
 			fs_private_dir_copy("/etc", RUN_ETC_DIR, cfg.etc_private_keep);
-			fs_private_dir_copy("/usr/etc", RUN_USR_ETC_DIR, cfg.etc_private_keep); // openSUSE
 
 			if (umount2("/etc/group", MNT_DETACH) == -1)
-				fprintf(stderr, "/etc/group: unmount: %m\n");
-
+				fprintf(stderr, "/etc/group: unmount: %s\n", strerror(errno));
 			if (umount2("/etc/passwd", MNT_DETACH) == -1)
-				fprintf(stderr, "/etc/passwd: unmount: %m\n");
+				fprintf(stderr, "/etc/passwd: unmount: %s\n", strerror(errno));
 
 			fs_private_dir_mount("/etc", RUN_ETC_DIR);
-			fs_private_dir_mount("/usr/etc", RUN_USR_ETC_DIR);
+			fmessage("Private /etc installed in %0.2f ms\n", timetrace_end());
 
 			// create /etc/ld.so.preload file again
 			if (need_preload)
 				fs_trace_preload();
+
+			// openSUSE configuration is split between /etc and /usr/etc
+			// process private-etc a second time
+			fs_private_dir_list("/usr/etc", RUN_USR_ETC_DIR, cfg.etc_private_keep);
 		}
 	}
 
@@ -1027,21 +1029,9 @@ int sandbox(void* sandbox_arg) {
 		fs_dev_disable_video();
 
 	//****************************
-	// install trace
-	//****************************
-	if (need_preload)
-		fs_trace();
-
-	//****************************
 	// set dns
 	//****************************
 	fs_resolvconf();
-
-	//****************************
-	// fs post-processing
-	//****************************
-	fs_logger_print();
-	fs_logger_change_owner();
 
 	//****************************
 	// start dhcp client
@@ -1090,6 +1080,12 @@ int sandbox(void* sandbox_arg) {
 
 	// save original umask
 	save_umask();
+
+	//****************************
+	// fs post-processing
+	//****************************
+	fs_logger_print();
+	fs_logger_change_owner();
 
 	//****************************
 	// set security filters
@@ -1147,6 +1143,16 @@ int sandbox(void* sandbox_arg) {
 	// make seccomp filters read-only
 	fs_remount(RUN_SECCOMP_DIR, MOUNT_READONLY, 0);
 	seccomp_debug();
+
+	//****************************
+	// install trace - still need capabilities
+	//****************************
+	if (need_preload)
+		fs_trace();
+
+	//****************************
+	// continue security filters
+	//****************************
 
 	// set capabilities
 	set_caps();

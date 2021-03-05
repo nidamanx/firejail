@@ -34,6 +34,31 @@ extern void fslib_install_system(void);
 static int lib_cnt = 0;
 static int dir_cnt = 0;
 
+static const char *lib_dirs[] = {
+	"/usr/lib64",
+	"/lib64",
+	"/usr/lib",
+	"/lib",
+	"/usr/local/lib64",
+	"/usr/local/lib",
+	NULL,
+};
+
+// return 1 if the file is in lib_dirs[]
+static int valid_full_path(const char *full_path) {
+	if (strstr(full_path, ".."))
+		return 0;
+
+	int i = 0;
+	while (lib_dirs[i]) {
+		if (strncmp(full_path, lib_dirs[i], strlen(lib_dirs[i])) == 0 &&
+		    full_path[strlen(lib_dirs[i])] == '/')
+			return 1;
+		i++;
+	}
+	return 0;
+}
+
 char *find_in_path(const char *program) {
 	EUID_ASSERT();
 	if (arg_debug)
@@ -108,7 +133,8 @@ void fslib_duplicate(const char *full_path) {
 	assert(full_path);
 
 	struct stat s;
-	if (stat(full_path, &s) != 0 || s.st_uid != 0 || access(full_path, R_OK))
+	if (stat(full_path, &s) != 0 || s.st_uid != 0 || access(full_path, R_OK)
+	   || !valid_full_path(full_path))
 		return;
 
 	char *dest_dir = build_dest_dir(full_path);
@@ -208,7 +234,8 @@ void fslib_copy_dir(const char *full_path) {
 
 	// do nothing if the directory does not exist or is not owned by root
 	struct stat s;
-	if (stat(full_path, &s) != 0 || s.st_uid != 0 || !S_ISDIR(s.st_mode) || access(full_path, R_OK))
+	if (stat(full_path, &s) != 0 || s.st_uid != 0 || !S_ISDIR(s.st_mode) || access(full_path, R_OK)
+	   || !valid_full_path(full_path))
 		return;
 
 	char *dir_name = strrchr(full_path, '/');
@@ -334,34 +361,20 @@ void fslib_install_list(const char *lib_list) {
 	fs_logger_print();
 }
 
-
-
 static void mount_directories(void) {
-	if (arg_debug || arg_debug_private_lib)
-		printf("Mount-bind %s on top of /lib /lib64 /usr/lib\n", RUN_LIB_DIR);
+	fs_remount(RUN_LIB_DIR, MOUNT_READONLY, 1); // should be redundant except for RUN_LIB_DIR itself
 
-	if (is_dir("/lib")) {
-		if (mount(RUN_LIB_DIR, "/lib", NULL, MS_BIND|MS_REC, NULL) < 0 ||
-			mount(NULL, "/lib", NULL, MS_BIND|MS_REMOUNT|MS_NOSUID|MS_NODEV|MS_REC, NULL) < 0)
-			errExit("mount bind");
-		fs_logger2("tmpfs", "/lib");
-		fs_logger("mount /lib");
-	}
-
-	if (is_dir("/lib64")) {
-		if (mount(RUN_LIB_DIR, "/lib64", NULL, MS_BIND|MS_REC, NULL) < 0 ||
-			mount(NULL, "/lib64", NULL, MS_BIND|MS_REMOUNT|MS_NOSUID|MS_NODEV|MS_REC, NULL) < 0)
-			errExit("mount bind");
-		fs_logger2("tmpfs", "/lib64");
-		fs_logger("mount /lib64");
-	}
-
-	if (is_dir("/usr/lib")) {
-		if (mount(RUN_LIB_DIR, "/usr/lib", NULL, MS_BIND|MS_REC, NULL) < 0 ||
-			mount(NULL, "/usr/lib", NULL, MS_BIND|MS_REMOUNT|MS_NOSUID|MS_NODEV|MS_REC, NULL) < 0)
-			errExit("mount bind");
-		fs_logger2("tmpfs", "/usr/lib");
-		fs_logger("mount /usr/lib");
+	int i = 0;
+	while (lib_dirs[i]) {
+		if (is_dir(lib_dirs[i])) {
+			if (arg_debug || arg_debug_private_lib)
+				printf("Mount-bind %s on top of %s\n", RUN_LIB_DIR, lib_dirs[i]);
+			if (mount(RUN_LIB_DIR, lib_dirs[i], NULL, MS_BIND|MS_REC, NULL) < 0)
+				errExit("mount bind");
+			fs_logger2("tmpfs", lib_dirs[i]);
+			fs_logger2("mount", lib_dirs[i]);
+		}
+		i++;
 	}
 
 	// for amd64 only - we'll deal with i386 later
